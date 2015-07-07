@@ -1,0 +1,85 @@
+---
+title: "Harris matrices using RPostgreSQL and DiagrammeR"
+author: "Nick Gauthier"
+date: "July 7, 2015"
+output: 
+  html_document: 
+    highlight: haddock
+    theme: cosmo
+---
+
+Here is an example workflow for taking stratigraphic information from the excavation database and generating on-the-fly Harris Matrices.  
+  
+We need three packages to accomplish this:  
+1. RPostgreSQL for querying the DB and getting the results.  
+2. dplyr for cleaning the query results from the DB so they can be read by the graphing function.  
+3. DiagrammeR for generating Harris Matrices from the cleaned data.  
+
+```{r warning = F, message = F}
+library(RPostgreSQL)          # DB interface
+library(dplyr)                # data cleaning
+library(DiagrammeR)           # plotting
+```
+  
+Connect to the excavation DB  
+
+```{r}
+con <- dbConnect("PostgreSQL",
+                 host='192.168.2.100', 
+                 port = '5432', 
+                 dbname = 'gygaia', 
+                 user = 'gygaiaro', 
+                 password = 'gygaiaro')  
+```
+  
+Choose an excavation area  
+
+```{r}
+area <- c('93', '545')
+```
+  
+Generate a PostgreSQL query  
+
+```{r}
+query <- paste('SELECT excavation.contexts.subtable, excavation.contexts.context_number, excavation.contexts_stratigraphic_relationships.stratigraphic_relationship_type, excavation.contexts_stratigraphic_relationships.stratigraphic_relationship_subtype, excavation.contexts_stratigraphic_relationships.related_context_number FROM excavation.contexts INNER JOIN excavation.contexts_stratigraphic_relationships ON (excavation.contexts.context_number = excavation.contexts_stratigraphic_relationships.context_number) AND (excavation.contexts.area_northing = excavation.contexts_stratigraphic_relationships.area_northing) AND (excavation.contexts.area_easting = excavation.contexts_stratigraphic_relationships.area_easting) GROUP BY excavation.contexts.area_easting, excavation.contexts.area_northing, excavation.contexts.subtable, excavation.contexts.context_number, excavation.contexts_stratigraphic_relationships.stratigraphic_relationship_type, excavation.contexts_stratigraphic_relationships.stratigraphic_relationship_subtype, excavation.contexts_stratigraphic_relationships.related_context_number HAVING (((excavation.contexts.area_easting)=',area[1],') AND ((excavation.contexts.area_northing)=',area[2],')) ORDER BY excavation.contexts.context_number;', sep = '')
+```
+  
+Query the database, make a data table
+
+```{r, message = F, results = 'hide'}
+db.out <- dbGetQuery(con, query) %>% tbl_df
+dbDisconnect(con)        # close the DB connection
+```
+
+```{r echo = F, results = 'asis'}
+knitr::kable(db.out[1:10,])
+```
+  
+    
+  
+Clean the result so the plotting function can read it
+
+```{r}
+db.clean <- db.out %>% tbl_df %>%
+     filter(stratigraphic_relationship_type == 'Earlier than') %>%
+     select(context_number, related_context_number) %>%
+     mutate_each(funs(as.character)) %>%
+     transmute(relations = paste(context_number, related_context_number, sep = '-->')) %>%
+     t %>% paste0(collapse = ';')
+```
+
+```{r echo = F, results ='asis'}
+knitr::kable(db.clean)
+```
+  
+    
+Draw the Harris Matrix
+
+```{r, fig.width = 9, fig.height = 4}
+diagram.command <- paste("graph BT", db.clean, sep = ';') 
+DiagrammeR(diagram.command)
+```
+  
+   
+   
+   This is simple example output. The DiagrammeR package has a rich set of functions to map information from the DB onto the color, size, shape, etc of the outputs.
